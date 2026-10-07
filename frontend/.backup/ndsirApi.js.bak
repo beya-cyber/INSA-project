@@ -1,0 +1,54 @@
+// frontend/src/lib/ndsirApi.js
+// Bridge between Django backend and NdsirContext store.
+
+import axiosClient from '../api/axiosClient'
+
+function prettyVector(t) {
+  const map = {
+    VOICE_SCAM: 'Voice Scam',
+    PHISHING: 'Phishing',
+    MOBILE_BANKING_FRAUD: 'Mobile Banking Fraud',
+    SMS_IMPERSONATION: 'SMS Impersonation',
+    SIM_SWAP: 'SIM Swap',
+    OTHER: 'Other',
+  }
+  return map[t] || t || 'Unknown'
+}
+
+function guessInstitution(identifier) {
+  if (!identifier) return 'Commercial Bank of Ethiopia'
+  const s = String(identifier).toLowerCase()
+  if (s.includes('telebirr') || s.includes('0911') || s.includes('0922')) return 'Telebirr P2P'
+  if (s.includes('awash')) return 'Awash Bank'
+  if (s.includes('abyssinia') || s.includes('boa')) return 'Bank of Abyssinia'
+  return 'Commercial Bank of Ethiopia'
+}
+
+export function mapIncidentToDossier(inc) {
+  return {
+    id: inc.tracking_code,
+    victimName: inc.victim?.full_name || 'Unknown Citizen',
+    nationalId: inc.victim?.fayda_id_hash
+      ? `NID-${inc.victim.fayda_id_hash.slice(0, 8).toUpperCase()}`
+      : 'NID-PENDING',
+    phone: inc.victim?.phone_number || '—',
+    inst: guessInstitution(inc.scammer_identifier),
+    amount: 0,
+    vector: prettyVector(inc.incident_type),
+    channel: inc.channel === 'WEB' ? 'Citizen Web Portal' : (inc.channel || 'Citizen Web Portal'),
+    suspectAccount: inc.scammer_identifier || 'ACC-UNKNOWN',
+    suspectHolder: 'Pending investigation',
+    suspectPhone: inc.scammer_phone_number || '—',
+    statement: inc.description || 'No statement provided.',
+    files: [],
+    date: new Date(inc.created_at).getTime(),
+    status: 'PENDING_ANALYST_REVIEW',
+    incidentId: null,
+  }
+}
+
+export async function fetchBackendDossiers() {
+  const { data } = await axiosClient.get('/incidents/reports/')
+  const list = Array.isArray(data) ? data : (data.results || [])
+  return list.map(mapIncidentToDossier)
+}

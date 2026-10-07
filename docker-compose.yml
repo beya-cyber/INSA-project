@@ -1,0 +1,117 @@
+version: "3.9"
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-ndsir_db}
+      POSTGRES_USER: ${POSTGRES_USER:-ndsir_admin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ndsir_admin}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - ndsir_net
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - ndsir_net
+
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    env_file: ./backend/.env
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - media_data:/app/media
+      - static_data:/app/staticfiles
+    networks:
+      - ndsir_net
+    command: >
+      sh -c "python manage.py makemigrations accounts incidents forensics integrations audit_logs --noinput &&
+             python manage.py migrate --noinput &&
+             python manage.py collectstatic --noinput &&
+             gunicorn core_config.wsgi:application --bind 0.0.0.0:8000 --workers 4 --timeout 60"
+
+  celery_worker:
+    build: ./backend
+    restart: unless-stopped
+    env_file: ./backend/.env
+    depends_on:
+      backend:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      db:
+        condition: service_healthy
+    volumes:
+      - media_data:/app/media
+    networks:
+      - ndsir_net
+    command: celery -A core_config worker --loglevel=info --concurrency=4
+
+  celery_beat:
+    build: ./backend
+    restart: unless-stopped
+    env_file: ./backend/.env
+    depends_on:
+      backend:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      db:
+        condition: service_healthy
+    networks:
+      - ndsir_net
+    command: celery -A core_config beat --loglevel=info
+
+  frontend:
+    build: ./frontend
+    restart: unless-stopped
+    env_file: ./frontend/.env
+    depends_on:
+      - backend
+    networks:
+      - ndsir_net
+
+  nginx:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/certs:/etc/nginx/certs:ro
+      - static_data:/app/staticfiles:ro
+      - media_data:/app/media:ro
+    depends_on:
+      - backend
+      - frontend
+    networks:
+      - ndsir_net
+
+volumes:
+  pgdata:
+  media_data:
+  static_data:
+
+networks:
+  ndsir_net:
+    driver: bridge

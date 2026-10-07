@@ -1,0 +1,208 @@
+// src/context/NdsirContext.jsx
+// React binding for the shared NDSIR command-network store.
+//  * One reducer holds incidents, freeze orders, evidence, warrants, audit chain and admin telemetry.
+//  * State is persisted to localStorage and synced across browser tabs via the `storage` event,
+//    so you can open Analyst and Bank in two tabs and watch a dispatch arrive live.
+import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react'
+import { createSeedState, reducer, PINS, DEFAULT_ACTORS, STORE_VERSION, WAF_CATALOG, isReachable, nodeFor, validateWarrantSignature, instByName } from '../store/ndsirStore'
+import { fetchBackendDossiers } from '../lib/ndsirApi'
+
+const KEY = 'ndsir_state_v1'
+const NdsirContext = createContext(null)
+
+function readShared() {
+  try {
+    const raw = localStorage.getItem(KEY)
+    if (raw) {
+      const parsed = JSON.parse(raw)
+      if (parsed && parsed.v === STORE_VERSION && Array.isArray(parsed.audit)) return parsed
+    }
+  } catch { /* corrupt or unavailable: caller falls back */ }
+  return null
+}
+function writeShared(s) {
+  try { localStorage.setItem(KEY, JSON.stringify(s)) } catch { /* storage full/unavailable: keep running in memory */ }
+}
+function loadState() {
+  const existing = readShared()
+  if (existing) return existing
+  const seeded = createSeedState(Date.now())
+  writeShared(seeded) // publish immediately so a second tab opening now adopts it instead of seeding its own
+  return seeded
+}
+
+// Role/user live in sessionStorage so each browser tab is its own login session, while the
+// command-network state itself lives in localStorage and is shared by every tab.
+const SESSION = { role: 'ndsir_auth_role', user: 'ndsir_user', epoch: 'ndsir_session_epoch' }
+export function currentEpoch() {
+  try { return JSON.parse(localStorage.getItem(KEY) || '{}').epoch || 0 } catch { return 0 }
+}
+export function startSession(role, user) {
+  sessionStorage.setItem(SESSION.role, role)
+  sessionStorage.setItem(SESSION.user, user)
+  sessionStorage.setItem(SESSION.epoch, String(currentEpoch()))
+}
+export function endSession() { Object.values(SESSION).forEach((k) => sessionStorage.removeItem(k)) }
+export function getSession() {
+  return { role: sessionStorage.getItem(SESSION.role), user: sessionStorage.getItem(SESSION.user), epoch: Number(sessionStorage.getItem(SESSION.epoch) || 0) }
+}
+export const actorFor = (role) => sessionStorage.getItem(SESSION.user) || DEFAULT_ACTORS[role] || 'unknown'
+
+const rnd = (a, b) => a + Math.random() * (b - a)
+const randIp = () => `${[185, 91, 45, 103, 178][Math.floor(Math.random() * 5)]}.${Math.floor(rnd(1, 254))}.${Math.floor(rnd(1, 254))}.${Math.floor(rnd(1, 254))}`
+
+export function NdsirProvider({ children }) {
+  const [state, setState] = useState(loadState)
+  const ref = useRef(state)
+
+  // Storage is the single source of truth. Every action does read-latest -> reduce -> write in one
+  // synchronous step, so a telemetry tick or action from another tab can never overwrite this one
+  // with a stale copy (the classic lost-update race of multi-tab shared state).
+  const dispatch = useRef((action) => {
+    const current = readShared() || ref.current
+    const next = reducer(current, action)
+    if (next !== current) writeShared(next)
+    ref.current = next
+    setState(next)
+  }).current
+
+  // adopt changes made by other tabs
+  useEffect(() => {
+    const onStorage = (e) => {
+      if (e.key !== KEY || !e.newValue) return
+      const next = readShared()
+      if (next) { ref.current = next; setState(next) }
+    }
+    window.addEventListener('storage', onStorage)
+    return () => window.removeEventListener('storage', onStorage)
+  }, [])
+
+  // live telemetry feed (node latency jitter + occasional WAF block)
+  useEffect(() => {
+    const t = setInterval(() => {
+      const latency = {}
+      ref.current.nodes.forEach((n) => { latency[n.id] = Math.max(4, Math.round(n.base + rnd(-0.25, 0.35) * n.base)) })
+      let waf = null
+      if (Math.random() < 0.35) {
+        const [type, severity, detail] = WAF_CATALOG[Math.floor(Math.random() * WAF_CATALOG.length)]
+        waf = { ts: Date.now(), type, severity, detail, srcIp: randIp(), rule: `OWASP-CRS-9${Math.floor(rnd(10, 99))}` }
+      }
+      dispatch({ type: 'TICK', latency, waf })
+    }, 5000)
+    return () => clearInterval(t)
+  }, [dispatch])
+
+
+  // ─── Live sync from Django backend ─────────────────────────────
+  useEffect(() => {
+    let cancelled = false
+
+    const sync = async () => {
+      try {
+        const dossiers = await fetchBackendDossiers()
+        if (cancelled) return
+        dossiers.forEach((d) => {
+          const exists = ref.current.dossiers.some((x) => x.id === d.id)
+          if (!exists) {
+            dispatch({
+              type: 'INGEST_DOSSIER',
+              dossier: d,
+              actor: 'backend_sync',
+              ts: Date.now(),
+            })
+          }
+        })
+      } catch (e) {
+        // Silent fail — backend offline or auth missing.
+      }
+    }
+
+    const firstRun = setTimeout(sync, 1500)
+    const interval = setInterval(sync, 15000)
+
+    return () => {
+      cancelled = true
+      clearTimeout(firstRun)
+      clearInterval(interval)
+    }
+  }, [dispatch])
+
+  const A = useMemo(() => {
+    const now = () => Date.now()
+    const act = (role) => actorFor(role)
+    const checkPin = (role, pin, context) => {
+      if (pin === PINS[role]) return true
+      dispatch({ type: 'PIN_FAILED', role, actor: act(role), context, ts: now() })
+      return false
+    }
+    return {
+      audit: (role, action, details) => dispatch({ type: 'LOG', role, actor: act(role), action, details, ts: now() }),
+      ingestDossier: (dossier) => dispatch({ type: 'INGEST_DOSSIER', dossier, actor: act('analyst'), ts: now() }),
+      verifyFile: (dossierId, idx, hash) => dispatch({ type: 'VERIFY_FILE', dossierId, idx, hash, actor: act('analyst'), ts: now() }),
+      validateDossier: (dossierId) => dispatch({ type: 'VALIDATE_DOSSIER', dossierId, actor: act('analyst'), ts: now() }),
+      dispatchFreeze: (incidentId, idxs, pin) => {
+        if (!checkPin('analyst', pin, `freeze dispatch ${incidentId}`)) return { ok: false, error: 'Incorrect analyst PIN.' }
+        const inc = ref.current.incidents.find((x) => x.id === incidentId)
+        const blocked = inc?.targets.filter((t, i) => idxs.includes(i) && !isReachable(ref.current, t.inst)) || []
+        dispatch({ type: 'DISPATCH_FREEZE', incidentId, idxs, actor: act('analyst'), ts: now() })
+        return blocked.length ? { ok: true, warning: `${blocked.map((b) => nodeFor(ref.current, b.inst).id).join(', ')} isolated by Administrator — those targets were NOT transmitted.` } : { ok: true }
+      },
+      executeFreeze: (orderId, pin) => {
+        if (!checkPin('bank', pin, `freeze execution ${orderId}`)) return { ok: false, error: 'Incorrect officer PIN.' }
+        const o = ref.current.orders.find((x) => x.id === orderId)
+        if (o && !isReachable(ref.current, o.inst)) { dispatch({ type: 'EXECUTE_FREEZE', orderId, actor: act('bank'), ts: now() }); return { ok: false, error: `Gateway ${nodeFor(ref.current, o.inst).id} is isolated by the Administrator.` } }
+        dispatch({ type: 'EXECUTE_FREEZE', orderId, actor: act('bank'), ts: now() })
+        return { ok: true }
+      },
+      restoreOrder: (orderId, reason, pin) => {
+        if (!checkPin('bank', pin, `restoration ${orderId}`)) return { ok: false, error: 'Incorrect officer PIN.' }
+        dispatch({ type: 'RESTORE_ORDER', orderId, reason: reason || 'False positive', actor: act('bank'), ts: now() })
+        return { ok: true }
+      },
+      issueRestitution: (recId) => dispatch({ type: 'ISSUE_RESTITUTION', recId, actor: act('bank'), ts: now() }),
+      createWarrant: (warrant) => dispatch({ type: 'WARRANT_CREATE', warrant, actor: act('police'), ts: now() }),
+      signWarrant: (id, pin) => {
+        if (!checkPin('police', pin, `warrant signature ${id}`)) return { ok: false, error: 'Incorrect magistrate PIN.' }
+        dispatch({ type: 'WARRANT_SIGN', id, actor: act('police'), ts: now() })
+        return { ok: true }
+      },
+      serveWarrant: (id) => dispatch({ type: 'WARRANT_SERVE', id, actor: act('police'), ts: now() }),
+      validateWarrant: (id, signature) => {
+        const valid = validateWarrantSignature(ref.current.warrants.find((w) => w.id === id), signature)
+        dispatch({ type: 'WARRANT_VALIDATED', id, valid, role: getSession().role === 'auditor' ? 'auditor' : 'police', actor: act(getSession().role || 'police'), ts: now() })
+        return valid
+      },
+      accessEvidence: (evidenceId, file) => dispatch({ type: 'EVIDENCE_ACCESS', evidenceId, file, role: getSession().role === 'auditor' ? 'auditor' : 'police', actor: act(getSession().role || 'police'), ts: now() }),
+      dispatchTaskForce: (suspectId, unit) => dispatch({ type: 'TASKFORCE_DISPATCH', suspectId, unit, actor: act('police'), ts: now() }),
+      updateTaskForce: (suspectId, status) => dispatch({ type: 'TASKFORCE_UPDATE', suspectId, status, actor: act('police'), ts: now() }),
+      isolateNode: (nodeId, reason) => dispatch({ type: 'NODE_ISOLATE', nodeId, reason: reason || 'Operator panic action', actor: act('admin'), ts: now() }),
+      restoreNode: (nodeId) => dispatch({ type: 'NODE_RESTORE', nodeId, actor: act('admin'), ts: now() }),
+      globalReset: () => {
+        // the issuing admin keeps their own session; every other session becomes stale
+        sessionStorage.setItem(SESSION.epoch, String(ref.current.epoch + 1))
+        dispatch({ type: 'GLOBAL_RESET', actor: act('admin'), ts: now() })
+      },
+      blockIp: (ip) => dispatch({ type: 'BLOCK_IP', ip, actor: act('admin'), ts: now() }),
+      userAction: (userId, op) => dispatch({ type: 'USER_ACTION', userId, op, actor: act('admin'), ts: now() }),
+      provisionUser: (user) => dispatch({ type: 'USER_PROVISION', user, actor: act('admin'), ts: now() }),
+      resetDemo: () => dispatch({ type: 'RESET_DEMO', ts: now() }),
+      instByName,
+    }
+  }, [dispatch])
+
+  const value = useMemo(() => ({ state, actions: A }), [state, A])
+  return <NdsirContext.Provider value={value}>{children}</NdsirContext.Provider>
+}
+
+export function useNdsir() {
+  const ctx = useContext(NdsirContext)
+  if (!ctx) throw new Error('useNdsir must be used inside <NdsirProvider>')
+  return ctx
+}
+
+// ticking clock for live SLA timers
+export function useNow(intervalMs = 1000) {
+  const [now, setNow] = useState(Date.now())
+  useEffect(() => { const t = setInterval(() => setNow(Date.now()), intervalMs); return () => clearInterval(t) }, [intervalMs])
+  return now
+}

@@ -1,0 +1,138 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-[#030712] text-slate-100 font-mono antialiased selection:bg-cyan-500 selection:text-black;
+  }
+}
+
+/* ==========================================================================
+   Tactical FBI Cyber-Ops Visual Effects & Animations
+   ========================================================================== */
+
+/* Animated grid background opacity pulse */
+@keyframes grid-glow {
+
+  0%,
+  100% {
+    opacity: 0.15;
+  }
+
+  50% {
+    opacity: 0.35;
+  }
+}
+
+/* Radar sweep rotation animation */
+@keyframes radar-sweep {
+  0% {
+    transform: rotate(0deg);
+  }
+
+  100% {
+    transform: rotate(360deg);
+  }
+}
+
+/* Laser dash flow along SVG connection lines */
+@keyframes laser-flow {
+  0% {
+    stroke-dashoffset: 24;
+  }
+
+  100% {
+    stroke-dashoffset: 0;
+  }
+}
+
+/* Expanding ring effect for critical threat nodes */
+@keyframes pulse-ring {
+  0% {
+    transform: scale(0.95);
+    opacity: 0.8;
+  }
+
+  50% {
+    transform: scale(1.15);
+    opacity: 0.3;
+  }
+
+  100% {
+    transform: scale(0.95);
+    opacity: 0.8;
+  }
+}
+
+/* Radar grid background generator */
+.bg-radar-grid {
+  background-size: 32px 32px;
+  background-image:
+    linear-gradient(to right, rgba(6, 182, 212, 0.08) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(6, 182, 212, 0.08) 1px, transparent 1px);
+  animation: grid-glow 4s ease-in-out infinite;
+}
+
+/* Radar sweep line rotation class */
+.radar-sweep-line {
+  animation: radar-sweep 8s linear infinite;
+  transform-origin: center;
+}
+
+/* Animated SVG path laser line */
+.animated-link {
+  stroke-dasharray: 6 6;
+  animation: laser-flow 1s linear infinite;
+}
+
+/* Node pulse effect */
+.animated-pulse-node {
+  animation: pulse-ring 2s ease-in-out infinite;
+  transform-origin: center;
+}
+
+/* Cyan drop shadow glow */
+.glow-node-cyan,
+.glow-cyan {
+  filter: drop-shadow(0 0 10px rgba(6, 182, 212, 0.8));
+}
+
+/* Danger / Critical red drop shadow glow */
+.glow-node-danger,
+.glow-danger {
+  filter: drop-shadow(0 0 14px rgba(239, 68, 68, 0.9));
+}
+
+/* Tactical Command Center Container Panel */
+.cyber-card,
+.console-panel {
+  @apply bg-[#080d1a] border border-slate-800/80 rounded-lg shadow-2xl backdrop-blur-md;
+}
+/* Force dark input backgrounds for high contrast across the application */
+input[type="text"],
+input[type="password"],
+input[type="email"],
+select {
+  background-color: #0f172a !important;
+  color: #ffffff !important;
+  border-color: #334155 !important;
+}
+
+input::placeholder {
+  color: #64748b !important;
+}
+
+/* Global High-Contrast Inputs Fix */
+input[type="text"],
+input[type="password"],
+input[type="email"],
+select {
+  background-color: #0f172a !important;
+  color: #ffffff !important;
+  border: 1px solid #334155 !important;
+}
+
+input::placeholder {
+  color: #94a3b8 !important;
+}
