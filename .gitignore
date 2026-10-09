@@ -16,3 +16,7 @@ node_modules/
 dist/
 build/
 .env
+
+# Dev artifacts (added Oct 9)
+.backup/
+backend/db.sqlite3
