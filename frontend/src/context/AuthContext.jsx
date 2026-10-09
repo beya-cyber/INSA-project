@@ -2,6 +2,7 @@ import { createContext, useContext, useEffect, useMemo, useState, useCallback } 
 import { jwtDecode } from 'jwt-decode'
 import { authApi } from '../api/authApi'
 import { ROLES } from '../lib/constants'
+import { clearAllClientState } from '../lib/session'
 
 const AuthContext = createContext(null)
 
@@ -69,9 +70,7 @@ export function AuthProvider({ children }) {
   }, [])
 
   const logout = useCallback(() => {
-    localStorage.removeItem(TOKEN_KEY)
-    localStorage.removeItem(REFRESH_KEY)
-    localStorage.removeItem(DEMO_USER_KEY)
+    clearAllClientState() // access + refresh tokens, demo user and the cached ndsir_state_v1 store
     setUser(null)
   }, [])
 

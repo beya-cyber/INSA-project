@@ -1,5 +1,5 @@
 // src/App.jsx
-import React from 'react'
+import React, { useEffect } from 'react'
 import { BrowserRouter as Router, Routes, Route, Navigate, Outlet } from 'react-router-dom'
 
 // Public & citizen pages
@@ -16,10 +16,18 @@ import AdminDashboard from './pages/admin/AdminDashboard'
 import AuditorDashboard from './pages/auditor/AuditorDashboard'
 
 import ConsoleNavbar from './components/common/ConsoleNavbar'
+import DevPinBanner from './components/common/DevPinBanner'
+import { authApi } from './api/authApi'
+import { TOKEN_KEY } from './lib/session'
 import RequireRole from './routes/RequireRole'
 import { NdsirProvider } from './context/NdsirContext'
 
 function StaffLayout() {
+  // On entering any staff portal, confirm the stored JWT is still good. A 401 here makes the axios
+  // interceptor try a refresh; if that fails it wipes tokens + cached state and sends us to /login.
+  useEffect(() => {
+    if (localStorage.getItem(TOKEN_KEY)) authApi.me().catch(() => {})
+  }, [])
   return (
     <div className="min-h-screen bg-[#010409] text-slate-100">
       <ConsoleNavbar />
@@ -59,6 +67,7 @@ export default function App() {
 
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
+        <DevPinBanner />
       </Router>
     </NdsirProvider>
   )

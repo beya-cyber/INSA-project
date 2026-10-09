@@ -345,9 +345,24 @@ export function reducer(s, a) {
 
     // ------------------------------------------------------------ Analyst
     case 'INGEST_DOSSIER': {
-      const id = `SUB-${s.seq.dossier}`
-      const dossier = { ...a.dossier, id, date: a.ts, status: 'PENDING_ANALYST_REVIEW', incidentId: null }
-      let n = { ...s, seq: { ...s.seq, dossier: s.seq.dossier + 1 }, dossiers: [dossier, ...s.dossiers] }
+      const incoming = a.dossier
+      // Backend-synced dossiers arrive with their own id (the tracking code). Ingest each once; if it
+      // is already here, only merge evidence uploaded after the first sync (while still unreviewed).
+      if (incoming.id) {
+        const existing = s.dossiers.find((x) => x.id === incoming.id)
+        if (existing) {
+          if (existing.status !== 'PENDING_ANALYST_REVIEW') return s
+          const known = new Set(existing.files.map((f) => f.sha256))
+          const fresh = (incoming.files || []).filter((f) => !known.has(f.sha256))
+          if (!fresh.length) return s
+          const merged = { ...existing, files: [...existing.files, ...fresh] }
+          const n = { ...s, dossiers: s.dossiers.map((x) => (x.id === existing.id ? merged : x)) }
+          return log(n, { ts: a.ts, actor: a.actor, role: 'analyst', action: 'EVIDENCE_SYNCED', details: `${fresh.length} new artifact(s) attached to ${existing.id} from the backend` })
+        }
+      }
+      const id = incoming.id || `SUB-${s.seq.dossier}`
+      const dossier = { ...incoming, id, date: incoming.date || a.ts, status: 'PENDING_ANALYST_REVIEW', incidentId: null }
+      let n = { ...s, seq: { ...s.seq, dossier: incoming.id ? s.seq.dossier : s.seq.dossier + 1 }, dossiers: [dossier, ...s.dossiers] }
       n = log(n, { ts: a.ts, actor: a.actor, role: 'analyst', action: 'QUEUED_INCIDENT', details: `Report ${id} ingested via ${dossier.channel} (${dossier.inst}, ${fmtN(dossier.amount)}, ${dossier.files.length} artifacts)` })
       return sys(n, { ts: a.ts, level: 'INFO', source: 'ANALYST_HUB', type: 'THREAT_INGESTION', message: `${id} ingested through ${dossier.channel}` })
     }

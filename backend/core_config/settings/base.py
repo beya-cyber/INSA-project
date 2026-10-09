@@ -85,12 +85,20 @@ TEMPLATES = [
 WSGI_APPLICATION = 'core_config.wsgi.application'
 
 # ---------------------------------------------------------------------------
-# Database (SQLite - Local Development / Presentation Mode)
+# Database (PostgreSQL) - ACID compliant, required for financial integrity
 # ---------------------------------------------------------------------------
 DATABASES = {
     'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+        'ENGINE': 'django.db.backends.postgresql',
+        'NAME': config('POSTGRES_DB', default='ndsir_db'),
+        'USER': config('POSTGRES_USER', default='ndsir_admin'),
+        'PASSWORD': config('POSTGRES_PASSWORD', default=''),
+        'HOST': config('POSTGRES_HOST', default='localhost'),
+        'PORT': config('POSTGRES_PORT', default='5432'),
+        'CONN_MAX_AGE': 60,
+        'OPTIONS': {
+            'connect_timeout': 10,
+        },
     }
 }
 
@@ -206,6 +214,51 @@ CELERY_TIMEZONE = TIME_ZONE
 CELERY_RESULT_EXTENDED = True
 CELERY_TASK_TRACK_STARTED = True
 CELERY_TASK_ACKS_LATE = True
+
+# ---------------------------------------------------------------------------
+# Cache (Redis) - OTP codes, OTP verification tokens and DRF throttle counters
+# live here. Set USE_REDIS_CACHE=False (e.g. for CI) to fall back to the
+# in-process cache; that is NOT safe with more than one worker process.
+# ---------------------------------------------------------------------------
+REDIS_URL = config('REDIS_URL', default='redis://127.0.0.1:6379/0')
+if config('USE_REDIS_CACHE', default=True, cast=bool):
+    CACHES = {
+        'default': {
+            'BACKEND': 'django.core.cache.backends.redis.RedisCache',
+            'LOCATION': REDIS_URL,
+            'KEY_PREFIX': 'ndsir',
+        }
+    }
+else:
+    CACHES = {'default': {'BACKEND': 'django.core.cache.backends.locmem.LocMemCache'}}
+
+# ---------------------------------------------------------------------------
+# Citizen phone OTP (apps/incidents/otp.py)
+# ---------------------------------------------------------------------------
+OTP_CODE_LENGTH = 6
+OTP_TTL_SECONDS = 300                  # code is valid for 5 minutes
+OTP_MAX_VERIFY_ATTEMPTS = 5            # wrong guesses before the code is burned
+OTP_REQUESTS_PER_WINDOW = config('OTP_REQUESTS_PER_WINDOW', default=3, cast=int)   # per phone
+OTP_REQUEST_WINDOW_SECONDS = 15 * 60                                               # ...per 15 min
+OTP_TOKEN_TTL_SECONDS = 15 * 60        # verification_token must be used within 15 min
+# When True (or when DEBUG is True) /otp/request/ also returns the code as `dev_code`.
+# Never enable in production.
+OTP_DEV_MODE = config('OTP_DEV_MODE', default=False, cast=bool)
+
+# ---------------------------------------------------------------------------
+# Demo PINs (DEV / DEMO ONLY)
+# The staff portals ask for a 4-digit PIN before dispatching freezes, executing
+# freezes and signing warrants. The PIN check itself currently runs in the
+# browser (frontend/src/store/ndsirStore.js PINS) - keep the two in sync, and
+# print them with:  python manage.py show_demo_pins
+# PRODUCTION: do not use fixed PINs. Derive a per-user PIN/secret with
+# HMAC-SHA256(server_key, user_id + role) and verify it server-side.
+# ---------------------------------------------------------------------------
+DEMO_PINS = {
+    'analyst': {'label': 'Fraud Analyst', 'pin': config('DEMO_PIN_ANALYST', default='1234'), 'purpose': 'Dispatch freeze orders'},
+    'bank':    {'label': 'Bank Officer',  'pin': config('DEMO_PIN_BANK',    default='4321'), 'purpose': 'Execute account freezes'},
+    'police':  {'label': 'Police',        'pin': config('DEMO_PIN_POLICE',  default='7777'), 'purpose': 'Sign & serve warrants'},
+}
 
 # ---------------------------------------------------------------------------
 # External Integrations

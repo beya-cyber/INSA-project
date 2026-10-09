@@ -1,7 +1,24 @@
 import React, { useState } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { startSession } from '../../context/NdsirContext'
+import { authApi } from '../../api/authApi'
+import { TOKEN_KEY, REFRESH_KEY, clearAuthTokens } from '../../lib/session'
 import { Shield, Lock, User, Key, ArrowLeft, AlertCircle, Terminal, ExternalLink } from 'lucide-react'
+
+// Backend roles allowed into each portal
+const PORTAL_ROLES = {
+  analyst: ['INSA_ANALYST', 'INSA_SUPERVISOR'],
+  bank: ['BANK_AGENT'],
+  police: ['POLICE_LIAISON'],
+  admin: ['ADMIN'],
+  auditor: ['AUDITOR'],
+}
+const apiError = (err) => {
+  const d = err.response?.data?.error?.detail ?? err.response?.data?.detail
+  if (typeof d === 'string') return d
+  if (d?.detail) return String(d.detail)
+  return 'Authentication failed. Check your credentials.'
+}
 
 export default function StaffLogin() {
   const navigate = useNavigate()
@@ -19,21 +36,40 @@ export default function StaffLogin() {
     { id: 'auditor', name: 'Compliance Auditor', path: '/auditor-dashboard', desc: 'Regulatory scorecards & immutable audit logs', icon: Key, color: 'text-amber-400 border-amber-500/40 bg-amber-950/20' },
   ]
 
-  const handleLogin = (e) => {
+  const handleLogin = async (e) => {
     e.preventDefault()
-    setLoading(true)
     setError(null)
+    if (!credentials.username || !credentials.password) {
+      setError('Institutional credentials required for cryptographic session initiation.')
+      return
+    }
+    setLoading(true)
+    const username = credentials.username.trim()
+    // Per-tab session (sessionStorage) so two tabs can sit in two different portals at once.
+    const enter = () => { startSession(selectedRole.id, username); navigate(selectedRole.path) }
 
-    setTimeout(() => {
-      if (!credentials.username || !credentials.password) {
-        setError('Institutional credentials required for cryptographic session initiation.')
+    try {
+      // Real backend login: stores the JWT pair that /incidents/reports/ (dossier sync) needs.
+      clearAuthTokens() // never inherit a previous user's tokens (cached store state is wiped on sign-out)
+      const { data } = await authApi.login(username, credentials.password)
+      if (!PORTAL_ROLES[selectedRole.id].includes(data.role)) {
+        setError(`This account (${data.role}) is not authorised for the ${selectedRole.name} portal.`)
         setLoading(false)
         return
       }
-      // Per-tab session (sessionStorage) so two tabs can sit in two different portals at once.
-      startSession(selectedRole.id, credentials.username.trim())
-      navigate(selectedRole.path)
-    }, 1500)
+      localStorage.setItem(TOKEN_KEY, data.access)
+      localStorage.setItem(REFRESH_KEY, data.refresh)
+      enter()
+    } catch (err) {
+      if (!err.response) {
+        // Backend unreachable: keep the original offline demo behaviour (mock data only, no live sync).
+        console.warn('[NDSIR] Backend unreachable - entering offline demo session (no live victim-report sync).')
+        enter()
+        return
+      }
+      setError(apiError(err))
+      setLoading(false)
+    }
   }
 
   return (
@@ -99,6 +135,12 @@ export default function StaffLogin() {
             <h2 className="text-lg font-bold text-white">Authenticating as: <span className="text-cyan-400">{selectedRole.name}</span></h2>
             <p className="text-[11px] text-slate-400">Enter your official employee ID and encrypted security token</p>
           </div>
+
+          {import.meta.env.DEV && (
+            <p className="text-[10px] text-slate-500 font-mono">
+              🧪 Dev login: analyst.demo / bank.demo / police.demo / admin.demo / auditor.demo — password NdsirDemo!2026 (run <span className="text-slate-400">manage.py seed_demo_data</span>). Backend offline → demo session without live sync.
+            </p>
+          )}
 
           {error && (
             <div className="p-3 bg-rose-950/80 border border-rose-500/50 rounded-xl text-xs text-rose-300 flex items-center gap-2">

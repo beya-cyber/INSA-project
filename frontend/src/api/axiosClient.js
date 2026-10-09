@@ -1,13 +1,10 @@
 import axios from 'axios'
+import { TOKEN_KEY, REFRESH_KEY, clearAuthTokens, clearAllClientState } from '../lib/session'
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api/v1'
 
-const axiosClient = axios.create({
-  baseURL: BASE_URL,
-  headers: { 'Content-Type': 'application/json' },
-})
-
-// Paths that should NEVER receive an Authorization header
+// Endpoints that must work for anonymous citizens. We never attach a JWT to these: a stale or
+// expired token in localStorage would otherwise make the backend answer 401 to a public request.
 const PUBLIC_PATHS = [
   '/incidents/submit/',
   '/incidents/evidence/upload/',
@@ -16,22 +13,28 @@ const PUBLIC_PATHS = [
   '/incidents/otp/verify/',
   '/auth/login/',
   '/auth/register/citizen/',
-  '/auth/token/refresh/',
 ]
+const isPublic = (url = '') => PUBLIC_PATHS.some((p) => url.includes(p))
 
-// --- Request interceptor: attach access token ---
+const axiosClient = axios.create({
+  baseURL: BASE_URL,
+  headers: { 'Content-Type': 'application/json' },
+})
+
+// --- Request interceptor: attach access token (not on public paths) ---
 axiosClient.interceptors.request.use((config) => {
-  const isPublic = PUBLIC_PATHS.some((p) => config.url && config.url.includes(p))
-  if (!isPublic) {
-    const token = localStorage.getItem('ndsir_access_token')
-    if (token) {
-      config.headers.Authorization = `Bearer ${token}`
-    }
+  if (isPublic(config.url)) {
+    if (config.headers) delete config.headers.Authorization
+    return config
+  }
+  const token = localStorage.getItem(TOKEN_KEY)
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`
   }
   return config
 })
 
-// --- Response interceptor: auto-refresh on 401 (safe, loop-proof) ---
+// --- Response interceptor: auto-refresh on 401 ---
 let isRefreshing = false
 let refreshQueue = []
 
@@ -40,60 +43,59 @@ function processQueue(error, token = null) {
   refreshQueue = []
 }
 
+// Refresh failed (or there is nothing to refresh with): wipe tokens AND cached state, go to login.
+// Background requests (config.skipAuthRedirect, e.g. the dossier sync) only drop the tokens, so a
+// poll running on the public citizen page can never bounce the visitor to /login.
+function failSession(originalRequest) {
+  if (originalRequest?.skipAuthRedirect) {
+    clearAuthTokens()
+    return
+  }
+  clearAllClientState()
+  if (!['/login', '/staff/login'].includes(window.location.pathname)) {
+    window.location.href = '/login'
+  }
+}
+
 axiosClient.interceptors.response.use(
   (response) => response,
   async (error) => {
-    const originalRequest = error.config || {}
-
-    // Caller explicitly opted out of auth-redirect behavior
-    if (originalRequest._skipAuthRedirect) {
+    const originalRequest = error.config
+    if (!originalRequest || error.response?.status !== 401 || originalRequest._retry || isPublic(originalRequest.url)) {
       return Promise.reject(error)
     }
 
-    if (error.response?.status === 401 && !originalRequest._retry) {
-      const refreshToken = localStorage.getItem('ndsir_refresh_token')
-
-      // No refresh token → just fail. Do NOT redirect.
-      if (!refreshToken) {
-        return Promise.reject(error)
-      }
-
-      if (isRefreshing) {
-        return new Promise((resolve, reject) => {
-          refreshQueue.push({ resolve, reject })
-        }).then((token) => {
-          originalRequest.headers.Authorization = `Bearer ${token}`
-          return axiosClient(originalRequest)
-        })
-      }
-
-      originalRequest._retry = true
-      isRefreshing = true
-
-      try {
-        const { data } = await axios.post(
-          `${BASE_URL}/auth/token/refresh/`,
-          { refresh: refreshToken }
-        )
-        localStorage.setItem('ndsir_access_token', data.access)
-        processQueue(null, data.access)
-        originalRequest.headers.Authorization = `Bearer ${data.access}`
+    if (isRefreshing) {
+      return new Promise((resolve, reject) => {
+        refreshQueue.push({ resolve, reject })
+      }).then((token) => {
+        originalRequest.headers.Authorization = `Bearer ${token}`
         return axiosClient(originalRequest)
-      } catch (refreshError) {
-        processQueue(refreshError, null)
-        localStorage.removeItem('ndsir_access_token')
-        localStorage.removeItem('ndsir_refresh_token')
-
-        // Only redirect if NOT already on login
-        if (!window.location.pathname.includes('/login')) {
-          window.location.href = '/login'
-        }
-        return Promise.reject(refreshError)
-      } finally {
-        isRefreshing = false
-      }
+      })
     }
-    return Promise.reject(error)
+
+    originalRequest._retry = true
+    const refreshToken = localStorage.getItem(REFRESH_KEY)
+    if (!refreshToken) {
+      failSession(originalRequest)
+      return Promise.reject(error)
+    }
+
+    isRefreshing = true
+    try {
+      const { data } = await axios.post(`${BASE_URL}/auth/token/refresh/`, { refresh: refreshToken })
+      localStorage.setItem(TOKEN_KEY, data.access)
+      if (data.refresh) localStorage.setItem(REFRESH_KEY, data.refresh) // backend rotates refresh tokens
+      processQueue(null, data.access)
+      originalRequest.headers.Authorization = `Bearer ${data.access}`
+      return axiosClient(originalRequest)
+    } catch (refreshError) {
+      processQueue(refreshError, null)
+      failSession(originalRequest)
+      return Promise.reject(refreshError)
+    } finally {
+      isRefreshing = false
+    }
   }
 )
 

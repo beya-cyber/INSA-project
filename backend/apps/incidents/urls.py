@@ -5,6 +5,8 @@ app_name = 'incidents'
 
 urlpatterns = [
     # Citizen-facing
+    path('otp/request/', views.OtpRequestView.as_view(), name='otp-request'),
+    path('otp/verify/', views.OtpVerifyView.as_view(), name='otp-verify'),
     path('submit/', views.CitizenIncidentSubmissionView.as_view(), name='submit'),
     path('evidence/upload/', views.EvidenceUploadView.as_view(), name='evidence-upload'),
     path('track/<str:tracking_code>/', views.CaseTrackingLookupView.as_view(), name='track'),

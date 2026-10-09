@@ -32,7 +32,7 @@ export default function ConsoleNavbar() {
         <button onClick={() => navigate('/staff/login')} className="text-slate-300 border border-slate-700 hover:border-cyan-500 text-xs font-medium px-3 py-1.5 rounded-md transition-all flex items-center gap-1.5 cursor-pointer" title="Switch to another portal">
           <Repeat className="h-3.5 w-3.5" /> <span className="hidden sm:inline">Switch Portal</span>
         </button>
-        <button onClick={() => { endSession(); navigate('/staff/login', { replace: true }) }} className="bg-rose-950/80 text-rose-300 border border-rose-800/60 hover:bg-rose-900 hover:text-white text-xs font-medium px-3.5 py-1.5 rounded-md transition-all flex items-center gap-1.5 cursor-pointer">
+        <button onClick={() => { endSession(); window.location.replace('/staff/login') }} className="bg-rose-950/80 text-rose-300 border border-rose-800/60 hover:bg-rose-900 hover:text-white text-xs font-medium px-3.5 py-1.5 rounded-md transition-all flex items-center gap-1.5 cursor-pointer">
           <LogOut className="h-3.5 w-3.5" /> <span>Sign Out</span>
         </button>
       </div>

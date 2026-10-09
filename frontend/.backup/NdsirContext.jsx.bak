@@ -4,10 +4,11 @@
 //  * State is persisted to localStorage and synced across browser tabs via the `storage` event,
 //    so you can open Analyst and Bank in two tabs and watch a dispatch arrive live.
 import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react'
-import { createSeedState, reducer, PINS, DEFAULT_ACTORS, STORE_VERSION, WAF_CATALOG, isReachable, nodeFor, validateWarrantSignature, instByName } from '../store/ndsirStore'
 import { fetchBackendDossiers } from '../lib/ndsirApi'
+import { TOKEN_KEY, STATE_KEY, SESSION_KEYS, clearAllClientState } from '../lib/session'
+import { createSeedState, reducer, PINS, DEFAULT_ACTORS, STORE_VERSION, WAF_CATALOG, isReachable, nodeFor, validateWarrantSignature, instByName } from '../store/ndsirStore'
 
-const KEY = 'ndsir_state_v1'
+const KEY = STATE_KEY
 const NdsirContext = createContext(null)
 
 function readShared() {
@@ -33,7 +34,7 @@ function loadState() {
 
 // Role/user live in sessionStorage so each browser tab is its own login session, while the
 // command-network state itself lives in localStorage and is shared by every tab.
-const SESSION = { role: 'ndsir_auth_role', user: 'ndsir_user', epoch: 'ndsir_session_epoch' }
+const SESSION = SESSION_KEYS
 export function currentEpoch() {
   try { return JSON.parse(localStorage.getItem(KEY) || '{}').epoch || 0 } catch { return 0 }
 }
@@ -42,7 +43,10 @@ export function startSession(role, user) {
   sessionStorage.setItem(SESSION.user, user)
   sessionStorage.setItem(SESSION.epoch, String(currentEpoch()))
 }
-export function endSession() { Object.values(SESSION).forEach((k) => sessionStorage.removeItem(k)) }
+// Sign-out wipes the JWTs, this tab's staff session AND the cached command-network state (ndsir_state_v1).
+// Callers should do a full page load afterwards (window.location.replace) so the provider re-seeds
+// instead of writing its in-memory copy straight back to localStorage.
+export function endSession() { clearAllClientState() }
 export function getSession() {
   return { role: sessionStorage.getItem(SESSION.role), user: sessionStorage.getItem(SESSION.user), epoch: Number(sessionStorage.getItem(SESSION.epoch) || 0) }
 }
@@ -92,39 +96,26 @@ export function NdsirProvider({ children }) {
     return () => clearInterval(t)
   }, [dispatch])
 
-
-  // ─── Live sync from Django backend ─────────────────────────────
+  // Pull real citizen reports from the Django backend into the Analyst queue:
+  // once ~1.5s after mount, then every 15s. Needs an analyst/auditor JWT (public visitors have none,
+  // so nothing is requested for them). Errors are swallowed - the backend may simply be offline.
   useEffect(() => {
     let cancelled = false
-
     const sync = async () => {
+      if (!localStorage.getItem(TOKEN_KEY)) return
       try {
         const dossiers = await fetchBackendDossiers()
         if (cancelled) return
-        dossiers.forEach((d) => {
-          const exists = ref.current.dossiers.some((x) => x.id === d.id)
-          if (!exists) {
-            dispatch({
-              type: 'INGEST_DOSSIER',
-              dossier: d,
-              actor: 'backend_sync',
-              ts: Date.now(),
-            })
-          }
+        dossiers.forEach((dossier) => {
+          const existing = ref.current.dossiers.find((d) => d.id === dossier.id)
+          if (existing && existing.files.length >= dossier.files.length) return // already ingested, nothing new
+          dispatch({ type: 'INGEST_DOSSIER', dossier, actor: 'backend_sync', ts: Date.now() })
         })
-      } catch (e) {
-        // Silent fail — backend offline or auth missing.
-      }
+      } catch { /* backend offline / not authorised: try again on the next tick */ }
     }
-
-    const firstRun = setTimeout(sync, 1500)
-    const interval = setInterval(sync, 15000)
-
-    return () => {
-      cancelled = true
-      clearTimeout(firstRun)
-      clearInterval(interval)
-    }
+    const first = setTimeout(sync, 1500)
+    const every = setInterval(sync, 15000)
+    return () => { cancelled = true; clearTimeout(first); clearInterval(every) }
   }, [dispatch])
 
   const A = useMemo(() => {

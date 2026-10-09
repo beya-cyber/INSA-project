@@ -5,6 +5,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ArrowLeft, Hash, Lock, Radio, X } from 'lucide-react'
+import { useNdsir } from '../../context/NdsirContext'
 
 export const ACCENTS = {
   cyan: { text: 'text-cyan-400', soft: 'text-cyan-300', line: 'border-cyan-500/20', icon: 'bg-cyan-950/80 border-cyan-500/50 text-cyan-400 shadow-[0_0_20px_rgba(6,182,212,0.3)]', tab: 'bg-cyan-950 text-cyan-300 border border-cyan-500/50 shadow', chip: 'bg-cyan-950 border-cyan-500/40 text-cyan-300', primary: 'bg-cyan-950 border border-cyan-500/50 hover:bg-cyan-900 text-cyan-300', banner: 'bg-cyan-950 border-cyan-400 text-cyan-200 shadow-[0_0_30px_rgba(6,182,212,0.5)]', ring: 'focus:border-cyan-500', modal: 'border-cyan-500/60' },
@@ -160,9 +161,15 @@ export function Modal({ open, onClose, title, icon: Icon, accent = 'cyan', wide,
 }
 
 // 4-digit PIN gate. `onConfirm(pin)` returns {ok, error}; modal closes on ok.
-export function PinModal({ open, onClose, onConfirm, title, description, demoPin, confirmLabel = 'Confirm PIN', accent = 'cyan', children }) {
+const PIN_ROLE_BY_ACCENT = { cyan: 'analyst', blue: 'bank', rose: 'police' }
+
+export function PinModal({ open, onClose, onConfirm, title, description, demoPin, confirmLabel = 'Confirm PIN', accent = 'cyan', role, children }) {
   const [pin, setPin] = useState('')
   const [error, setError] = useState(null)
+  // failed-PIN count for this role comes from the shared store (the reducer logs a brute-force WAF event on every 3rd)
+  const { state } = useNdsir()
+  const failures = state.failures?.[role || PIN_ROLE_BY_ACCENT[accent]] || 0
+  const untilWaf = 3 - (failures % 3)
   useEffect(() => { if (open) { setPin(''); setError(null) } }, [open])
   const submit = (e) => {
     e.preventDefault()
@@ -182,6 +189,10 @@ export function PinModal({ open, onClose, onConfirm, title, description, demoPin
             <input autoFocus type="password" inputMode="numeric" maxLength={4} placeholder="••••" value={pin} onChange={(e) => setPin(e.target.value.replace(/\D/g, ''))} className={`w-full bg-slate-900 border border-slate-800 rounded-xl pl-9 pr-4 py-2.5 text-white font-mono tracking-widest text-lg outline-none ${ACCENTS[accent].ring}`} />
           </div>
           {error && <p className="text-rose-400 text-[10px] mt-1">{error}</p>}
+          <p className={`text-[10px] mt-2 ${failures ? 'text-rose-300' : 'text-slate-500'}`}>
+            {failures > 0 && <span className="font-bold">Failed attempts: {failures}. </span>}
+            3 failed attempts logs a brute-force WAF event{failures > 0 ? ` (${failures % 3 === 0 ? 'one was just logged' : `${untilWaf} more to trigger`})` : ''}.
+          </p>
         </div>
         {demoPin && (
           <div className="flex items-center justify-between text-[11px] bg-slate-900/80 p-2.5 rounded-xl border border-slate-800">
