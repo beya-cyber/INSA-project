@@ -1,4 +1,24 @@
-# National Digital Scam Incident Response and Financial Fraud Report System (NDSIR)
+# NDSIR - National Digital Scam Incident Response (INSA Ethiopia)
+
+## 👥 Team Information
+* **Project Name:** National Digital Scam Incident Response and Financial Fraud Report System (NDSIR)
+* **Team Members:**
+Anatol Habtmau CTC-2471-26
+Behailu Kelemework CTC-467-26
+Betelhem Dagne  CTC-5064-26
+Rabira Asfaw  CTC-383-26
+Taye Teferi CTC-123-26
+
+---
+## 🎥 Video Presentation
+Watch the 9-minute project demonstration and feature walkthrough:
+👉 **[Click Here to Watch the Demo Video on Google Drive]https://drive.google.com/file/d/1PhlCwd_j4DhFw7DL0rVMDH9svZNNa7XS/view?usp=drive_link**
+
+---
+
+## 🚀 Project Description
+A world-class, defense-grade landing page and rapid scam interception platform built for INSA Ethiopia, featuring real-time telemetry, bilingual support (English/Amharic), interactive multi-hop fraud tracing, and secure federal intake channels.
+
 
 Backend implementation for INSA (Information Network Security Administration), Ethiopia.
 
