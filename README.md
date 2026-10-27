@@ -3,11 +3,11 @@
 ## 👥 Team Information
 * **Project Name:** National Digital Scam Incident Response and Financial Fraud Report System (NDSIR)
 * **Team Members:**
-Anatol Habtmau CTC-2471-26
-Behailu Kelemework CTC-467-26
-Betelhem Dagne  CTC-5064-26
-Rabira Asfaw  CTC-383-26
-Taye Teferi CTC-123-26
+1.Behailu Kelemework CTC-467-26
+2.Anatol Habtmau CTC-2471-26
+3.Betelhem Dagne  CTC-5064-26
+4.Rabira Asfaw  CTC-383-26
+5.Taye Teferi CTC-123-26
 
 ---
 ## 🎥 Video Presentation
